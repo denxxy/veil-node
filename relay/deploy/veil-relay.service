@@ -1,0 +1,37 @@
+[Unit]
+Description=Veil relay node (store-and-forward, E2E-encrypted)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=veilrelay
+Group=veilrelay
+WorkingDirectory=/opt/veil-relay
+ExecStart=/opt/veil-relay/venv/bin/python /opt/veil-relay/veil_relay.py \
+    --host 127.0.0.1 --port 8080 \
+    --db /var/lib/veil-relay/envelopes.db \
+    --trust-proxy
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/veil-relay
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+# Caddy reverse proxy for the Veil relay.
+#
+# Caddy automatically obtains and renews Let's Encrypt certificates, so the
+# relay is reachable over plain-looking HTTPS on port 443. Put this file at
+# /etc/caddy/Caddyfile (adjust the domain), then `systemctl reload caddy`.
+#
+# Extra resilience: proxy the same domain through Cloudflare (orange cloud).
+# The censor then sees only HTTPS to Cloudflare IPs, and blocking the relay
+# means blocking Cloudflare itself.
+
+relay.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}
