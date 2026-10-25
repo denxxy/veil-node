@@ -363,7 +363,9 @@ def build_app():
 def main():
     global args, db
     parser = argparse.ArgumentParser(description="Veil relay node")
-    parser.add_argument("--host", default=os.environ.get("VEIL_HOST", "127.0.0.1"))
+    parser.add_argument("--host", default=os.environ.get("VEIL_HOST", "0.0.0.0"),
+                        help="адрес для прослушивания (0.0.0.0 — все интерфейсы, "
+                             "в т.ч. внешний IP; 127.0.0.1 — только локально)")
     parser.add_argument("--port", type=int,
                         default=int(os.environ.get("VEIL_PORT", "8080")))
     parser.add_argument("--db", default=os.environ.get(
@@ -400,6 +402,12 @@ def main():
     print("  database  : %s" % os.path.abspath(args.db))
     print("  retention : %.1f days, inbox cap %d" %
           (args.retention_days, args.max_inbox))
+    loopback = args.host in ("127.0.0.1", "::1", "localhost")
+    if not loopback and not ssl_ctx:
+        print("  ВНИМАНИЕ:relay доступен снаружи БЕЗ TLS (голый HTTP).")
+        print("  Для публичного использования запустите с --tls-cert/--tls-key")
+        print("  (порт 443, сертификат Let's Encrypt) либо поставьте Caddy/nginx")
+        print("  перед relay и привяжите его к 127.0.0.1 (--host 127.0.0.1).")
     # access_log=None: never write user identifiers to any log.
     web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_ctx,
                 access_log=None, print=None)

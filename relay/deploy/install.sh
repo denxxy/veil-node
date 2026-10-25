@@ -5,14 +5,21 @@
 # finds veil_relay.py next to itself):
 #   sudo bash deploy/install.sh
 #
-# What it does:
-#   1. installs python3 + venv
-#   2. sets up /opt/veil-relay with a virtualenv and dependencies
-#   3. creates a system user `veilrelay` and /var/lib/veil-relay
-#   4. installs and starts the veil-relay systemd service on 127.0.0.1:8080
+# Параметры через переменные окружения (можно комбинировать):
+#   VEIL_PORT=8080             порт (по умолчанию 8080)
+#   VEIL_LOCAL=1               привязка 127.0.0.1 — режим «за Caddy/nginx»
+#   VEIL_TLS_CERT=/путь/к/fullchain.pem
+#   VEIL_TLS_KEY=/путь/к/privkey.pem
+#                              собственный TLS: relay сам слушает https://
+#                              (пути от Let's Encrypt/certbot; приватный ключ
+#                              должен быть читаем пользователю veilrelay)
 #
-# For public exposure put Caddy or nginx with TLS in front (see Caddyfile),
-# or run with --tls-cert/--tls-key directly.
+# По умолчанию relay привязывается к 0.0.0.0 — то есть к внешнему IP сервера.
+# Варианты публичного доступа:
+#   а) прямо:  VEIL_TLS_CERT=... VEIL_TLS_KEY=... VEIL_PORT=443  (рекомендуется)
+#   б) прямо без TLS (только для теста): голый HTTP на 8080 — откройте порт
+#      в фаерволе: ufw allow 8080/tcp (и в security group облака)
+#   в) за прокси: VEIL_LOCAL=1 + Caddy (см. deploy/Caddyfile) на 443
 
 set -euo pipefail
 
@@ -21,7 +28,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")".." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$SCRIPT_DIR/veil_relay.py"
 if [[ ! -f "$SRC" ]]; then
   echo "veil_relay.py не найден рядом с deploy/ ($SCRIPT_DIR)" >&2
@@ -31,6 +38,16 @@ fi
 VEIL_DIR=/opt/veil-relay
 DATA_DIR=/var/lib/veil-relay
 PORT="${VEIL_PORT:-8080}"
+if [[ "${VEIL_LOCAL:-0}" == "1" ]]; then
+  HOST=127.0.0.1
+else
+  HOST="${VEIL_HOST:-0.0.0.0}"
+fi
+
+ARGS="--host $HOST --port $PORT --db $DATA_DIR/envelopes.db --trust-proxy"
+if [[ -n "${VEIL_TLS_CERT:-}" && -n "${VEIL_TLS_KEY:-}" ]]; then
+  ARGS="$ARGS --tls-cert $VEIL_TLS_CERT --tls-key $VEIL_TLS_KEY"
+fi
 
 echo "==> Установка системных пакетов"
 export DEBIAN_FRONTEND=noninteractive
@@ -50,9 +67,15 @@ id -u veilrelay >/dev/null 2>&1 || useradd --system --home "$VEIL_DIR" \
 mkdir -p "$DATA_DIR"
 chown -R veilrelay:veilrelay "$DATA_DIR"
 chown -R root:veilrelay "$VEIL_DIR"
+# TLS-файлы: доступ на чтение сервис-пользователю
+if [[ -n "${VEIL_TLS_CERT:-}" ]]; then
+  chmod o-rwx "$VEIL_TLS_CERT" "$VEIL_TLS_KEY" 2>/dev/null || true
+  setfacl -m u:veilrelay:r "$VEIL_TLS_CERT" "$VEIL_TLS_KEY" 2>/dev/null || \
+    echo "  (setfacl недоступен: убедитесь, что veilrelay может читать TLS-файлы)"
+fi
 
-echo "==> systemd-юнит"
-sed "s|--port 8080|--port $PORT|" \
+echo "==> systemd-юнит (аргументы: $ARGS)"
+sed "s|__VEIL_ARGS__|$ARGS|" \
   "$SCRIPT_DIR/deploy/veil-relay.service" > /etc/systemd/system/veil-relay.service
 systemctl daemon-reload
 systemctl enable --now veil-relay.service
@@ -60,6 +83,12 @@ sleep 1
 systemctl --no-pager --lines=5 status veil-relay.service || true
 
 echo
-echo "Готово. Relay слушает 127.0.0.1:$PORT (проверка: curl http://127.0.0.1:$PORT/health)"
-echo "Следующий шаг — HTTPS перед relay: см. deploy/Caddyfile (Caddy + Let's Encrypt),"
-echo "и/или проксирование через Cloudflare, чтобы скрыть IP сервера."
+echo "Готово. Relay слушает $HOST:$PORT (проверка: curl http://127.0.0.1:$PORT/health)"
+if [[ "$HOST" == "0.0.0.0" && -z "${VEIL_TLS_CERT:-}" ]]; then
+  echo "⚠  Внешний доступ сейчас по голому HTTP. Для боевого использования:"
+  echo "   1) сертификат: apt install certbot && certbot certonly --standalone -d relay.example.com"
+  echo "   2) переустановите с VEIL_TLS_CERT=/etc/letsencrypt/live/relay.example.com/fullchain.pem \\"
+  echo "                        VEIL_TLS_KEY=/etc/letsencrypt/live/relay.example.com/privkey.pem VEIL_PORT=443"
+  echo "   3) откройте порт: ufw allow 443/tcp (и в security group облака)"
+  echo "   Либо режим за Caddy: VEIL_LOCAL=1 + deploy/Caddyfile."
+fi
